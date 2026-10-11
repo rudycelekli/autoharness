@@ -127,13 +127,17 @@ def dispatch(event, *, roots=None, reflect=None, consolidate=None):
             pcount = counters.bump_request(layer.PROJECT, proot)
             promoter.drain(config.INTERACTIVE_RUN_ID, roots=roots)  # /learn and other in-session proposals; no-op when empty
             result = on_stop.on_stop(event, root=proot)
+            launch_error = None
             if result.get("triggered"):
                 launch_result = fire(event, result, roots)
                 if isinstance(launch_result, dict) and launch_result.get("error"):
-                    return {"handled": name, "result": result, "error": launch_result["error"]}
+                    launch_error = launch_result["error"]
             if config.CONSOLIDATE_EVERY_N and pcount % config.CONSOLIDATE_EVERY_N == 0:
                 curate(_curate_run_id(event, pcount), roots)  # periodic content-level merge pass (rarer than reflection)
-            return {"handled": name, "result": result}
+            verdict = {"handled": name, "result": result}
+            if launch_error:
+                verdict["error"] = launch_error
+            return verdict
         if name == "SessionEnd":
             result = on_session_end.on_session_end(event, root=proot)
             if result.get("triggered"):
