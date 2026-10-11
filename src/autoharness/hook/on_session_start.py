@@ -68,6 +68,10 @@ def recall_index(roots, cwd=None):
             continue
         for path in skills.glob(f"*/{skill_store.SKILL_FILE}"):
             name = path.parent.name
+            try:
+                layer._check_name(name)
+            except ValueError:
+                continue  # handwritten skills are outside the managed pool
             if not sidecar.is_agent_created(lyr, name, root):
                 continue
             try:
@@ -132,6 +136,10 @@ def _members(lyr, root):
     members = []
     for path in skills.glob(f"*/{skill_store.SKILL_FILE}"):
         name = path.parent.name
+        try:
+            layer._check_name(name)
+        except ValueError:
+            continue
         if not sidecar.is_agent_created(lyr, name, root):
             continue
         s = sidecar.read(lyr, name, root)
