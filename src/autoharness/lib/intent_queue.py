@@ -7,6 +7,7 @@ atomic land = effectively exactly-once); in the extreme case where nothing ran, 
 """
 import json
 import re
+from contextlib import contextmanager
 
 from autoharness.lib import layer, lock
 
@@ -27,7 +28,7 @@ def _recoverable_data(p):
             json.loads(tail)
         except (ValueError, UnicodeDecodeError):
             # Only an unterminated final record is uncommitted. Complete malformed
-            # lines remain visible to read() and fail closed rather than disappearing.
+            # lines remain visible as explicit queue findings rather than disappearing.
             return data[:data.rfind(b"\n") + 1]
     return data
 
@@ -51,20 +52,49 @@ def append(run_id, intent, root=None):
             f.write(separator + json.dumps(intent, ensure_ascii=False) + "\n")
 
 
-def read(run_id, root=None):
+@contextmanager
+def locked(run_id, root=None):
+    """Hold the appender's lock across a complete read/land/clear transaction."""
+    p = _path(run_id, root)
+    with lock.file_lock(p.with_suffix(p.suffix + ".lock")):
+        yield
+
+
+def _read_unlocked(run_id, root=None):
     p = _path(run_id, root)
     if not p.exists():
         return []
-    with lock.file_lock(p.with_suffix(p.suffix + ".lock")):
-        if not p.exists():
-            return []
-        return [json.loads(line) for line in _recoverable_data(p).splitlines() if line.strip()]
+    rows = []
+    # JSONL is delimited by literal LF, not Unicode separators inside values.
+    for line in _recoverable_data(p).split(b"\n"):
+        if not line.strip():
+            continue
+        try:
+            intent = json.loads(line)
+            if not isinstance(intent, dict):
+                raise ValueError("queued intent is not an object")
+        except (ValueError, UnicodeDecodeError) as exc:
+            intent = {"_queue_error": str(exc)}
+        rows.append(intent)
+    return rows
 
 
-def clear(run_id, root=None):
+def read(run_id, root=None):
+    if not _path(run_id, root).exists():
+        return []
+    with locked(run_id, root):
+        return _read_unlocked(run_id, root)
+
+
+def _clear_unlocked(run_id, root=None):
     p = _path(run_id, root)
     if p.exists():
         p.unlink()
+
+
+def clear(run_id, root=None):
+    with locked(run_id, root):
+        _clear_unlocked(run_id, root)
 
 
 def orphans(root=None):
